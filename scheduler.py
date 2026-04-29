@@ -7,6 +7,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 import agent
 import darwin_hook
+import email_sender
 import memory
 import telegram_bot
 
@@ -79,7 +80,11 @@ def run_cre_weekly():
         memory.append_project_log("klaus", result)
         memory.append_project_log("cre-llm", result)
 
+        # Phase 1 (2026-04-29 → ~2 weeks): send via BOTH Telegram and email
+        # so we have a safety net while verifying the email rendering on
+        # different mail clients. After 2 successful Mondays, drop Telegram.
         telegram_bot.send_message(result)
+        email_sender.send_cre_brief(result)
         darwin_hook.post_findings("cre-market", result)
         log.info("CRE Weekly research job complete")
     except Exception as e:

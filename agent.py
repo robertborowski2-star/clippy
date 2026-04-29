@@ -5,6 +5,7 @@ import urllib.request
 import urllib.parse
 import json
 import os
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import requests
@@ -198,6 +199,186 @@ def fetch_eartharxiv(max_results: int = 50) -> str:
         return ""
     except Exception as e:
         return f"[EarthArxiv fetch failed: {e}]"
+
+
+# ── CRE source RSS fetchers ────────────────────────────────────────────────
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _fetch_rss(url: str, max_items: int = 15, keyword_filter: list = None,
+               over_fetch_factor: int = 4) -> list:
+    """Generic RSS 2.0 fetcher.
+
+    Returns a list of dicts: {title, link, description, categories}.
+    If keyword_filter is provided, items matching any keyword (in title,
+    description, or category) are kept; others dropped. We over-fetch to
+    compensate for filter rejections.
+    """
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Clippy-Research-Agent/1.0 (+https://github.com/robertborowski2-star/clippy)",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    })
+    with urllib.request.urlopen(req, timeout=15) as r:
+        xml_data = r.read()
+
+    root = ET.fromstring(xml_data)
+    channel = root.find("channel")
+    if channel is None:
+        return []
+
+    raw_items = channel.findall("item")
+    fetch_cap = max_items * over_fetch_factor if keyword_filter else max_items
+
+    results = []
+    for item in raw_items[:fetch_cap]:
+        title_el = item.find("title")
+        link_el = item.find("link")
+        desc_el = item.find("description")
+        cats = [c.text for c in item.findall("category") if c.text]
+
+        title = (title_el.text or "").strip() if title_el is not None and title_el.text else ""
+        link = (link_el.text or "").strip() if link_el is not None and link_el.text else ""
+        desc_raw = (desc_el.text or "").strip() if desc_el is not None and desc_el.text else ""
+        desc = _HTML_TAG_RE.sub("", desc_raw).strip()[:300]
+
+        if keyword_filter:
+            haystack = (title + " " + desc + " " + " ".join(cats)).lower()
+            if not any(kw.lower() in haystack for kw in keyword_filter):
+                continue
+
+        results.append({
+            "title": title, "link": link, "description": desc, "categories": cats,
+        })
+        if len(results) >= max_items:
+            break
+
+    return results
+
+
+def _format_rss_section(heading: str, items: list) -> str:
+    """Render a list of RSS dicts as a markdown section."""
+    if not items:
+        return f"## {heading}\n_(no recent items)_"
+    lines = [f"## {heading}"]
+    for it in items:
+        line = f"- **{it['title']}** ({it['link']})"
+        if it["description"]:
+            line += f"\n  {it['description']}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _slug_to_title(slug: str) -> str:
+    """Convert a URL slug like 'hudson-s-bay-ccaa-ruling' to 'Hudson S Bay Ccaa Ruling'."""
+    return " ".join(w.capitalize() for w in slug.replace("-", " ").split() if w)
+
+
+def _fetch_sitemap_recent(url: str, prefix: str = "", max_items: int = 15) -> list:
+    """Fetch a sitemap.xml, return the most recent entries by lastmod desc.
+
+    prefix: only include URLs starting with this string. Used to filter to
+    article paths (e.g., '/p/' on Insolvency Insider) and skip taxonomy
+    pages, author bios, and the homepage.
+
+    Returns list of dicts: {url, lastmod, slug, title}.
+    """
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Clippy-Research-Agent/1.0",
+        "Accept": "application/xml, text/xml, */*",
+    })
+    with urllib.request.urlopen(req, timeout=15) as r:
+        raw = r.read()
+
+    root = ET.fromstring(raw)
+    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    url_elements = root.findall("sm:url", ns)
+
+    entries = []
+    for u in url_elements:
+        loc_el = u.find("sm:loc", ns)
+        mod_el = u.find("sm:lastmod", ns)
+        if loc_el is None or not loc_el.text:
+            continue
+        loc = loc_el.text.strip()
+        if prefix and not loc.startswith(prefix):
+            continue
+        if not prefix and loc.endswith("/"):
+            continue
+        mod = mod_el.text.strip() if mod_el is not None and mod_el.text else "1970-01-01"
+        slug = loc.rstrip("/").rsplit("/", 1)[-1]
+        entries.append({
+            "url": loc,
+            "lastmod": mod,
+            "slug": slug,
+            "title": _slug_to_title(slug),
+        })
+
+    # ISO-8601 timestamps sort lexically the same as chronologically.
+    entries.sort(key=lambda e: e["lastmod"], reverse=True)
+    return entries[:max_items]
+
+
+def _format_sitemap_section(heading: str, entries: list) -> str:
+    """Render a list of sitemap entry dicts as a markdown section."""
+    if not entries:
+        return f"## {heading}\n_(no recent items)_"
+    lines = [f"## {heading}"]
+    for e in entries:
+        lines.append(f"- **{e['title']}** ({e['url']}) — {e['lastmod'][:10]}")
+    return "\n".join(lines)
+
+
+def fetch_renx(max_items: int = 20) -> str:
+    """Fetch recent RENx.ca articles via their posts sitemap.
+
+    RENx doesn't expose an RSS feed, so we use their posts sitemap and derive
+    titles from URL slugs. Slug-derived titles are imperfect (e.g., 'Nyc'
+    instead of 'NYC') but readable enough for the LLM to identify interesting
+    stories. All RENx content is CRE-focused so no keyword filter needed.
+    """
+    try:
+        entries = _fetch_sitemap_recent(
+            "https://renx.ca/sitemaps/posts-1.xml",
+            prefix="https://renx.ca/",
+            max_items=max_items,
+        )
+        return _format_sitemap_section("RENx — Recent Articles (sitemap)", entries)
+    except Exception as e:
+        return f"[RENx fetch failed: {e}]"
+
+
+def fetch_storeys(max_items: int = 15) -> str:
+    """Fetch recent Storeys articles via RSS."""
+    try:
+        items = _fetch_rss("https://storeys.com/feed/", max_items=max_items)
+        return _format_rss_section("Storeys — Recent Articles", items)
+    except Exception as e:
+        return f"[Storeys fetch failed: {e}]"
+
+
+def fetch_insolvency_insider(max_items: int = 15) -> str:
+    """Fetch recent Insolvency Insider filings via their sitemap.
+
+    Insolvency Insider is a SPA with no RSS, so we use their sitemap. Filtered
+    to article paths (`/p/...`) only. Items are NOT keyword-filtered to real
+    estate at fetch time — slug-only matching would miss CRE-relevant entries
+    like 'Hudson's Bay CCAA' (no 'real estate' keyword in slug). The CRE prompt
+    instructs the LLM to do the relevance filtering instead, which works well
+    because slugs carry the company name and case type.
+    """
+    try:
+        entries = _fetch_sitemap_recent(
+            "https://insolvencyinsider.ca/sitemap.xml",
+            prefix="https://insolvencyinsider.ca/p/",
+            max_items=max_items,
+        )
+        return _format_sitemap_section(
+            "Insolvency Insider — Recent Canadian Filings (unfiltered; LLM curates to CRE)",
+            entries,
+        )
+    except Exception as e:
+        return f"[Insolvency Insider fetch failed: {e}]"
 
 def load_voice_corrections() -> str:
     """Load voice correction examples to guide Clippy's writing style."""
@@ -504,35 +685,83 @@ def finance_geo_research(walnut_context: str = "") -> str:
 
 
 def cre_market_research(walnut_context: str = "", project_context: str = "") -> str:
-    """Monday 10:00 — CRE Weekly research, guided by Klaus + CRE-LLM project context."""
+    """Monday 10:00 — CRE Weekly research, guided by Klaus + CRE-LLM project context.
 
-    brave_cre = fetch_brave_search("Canadian commercial real estate news this week")
-    brave_renx = fetch_brave_search("RENx.ca commercial real estate")
-    brave_storeys = fetch_brave_search("Storeys commercial real estate Canada")
+    Output is structured for both walnut accumulation AND email delivery to
+    a colleague distribution list. Slightly more polished than other jobs:
+    executive summary intro, named themes as `## ` level-2 headings, and
+    sourced findings under each theme. The `## ` headings remain intact so
+    Darwin's chunker still works.
+    """
+
+    # Direct trade-press feeds. Storeys = real RSS; RENx and Insolvency
+    # Insider = sitemap-derived (no RSS available). Sitemap entries carry
+    # only URL + lastmod; titles are slug-derived (imperfect capitalization
+    # but readable). Insolvency Insider is unfiltered — the LLM filters
+    # to CRE-relevance below.
+    rss_renx = fetch_renx(max_items=20)
+    rss_storeys = fetch_storeys(max_items=15)
+    rss_insolvency = fetch_insolvency_insider(max_items=15)
+
+    # Brave Search — broader market context the trade press may not catch.
     brave_cmhc = fetch_brave_search("CMHC housing market Canada")
     brave_caprate = fetch_brave_search("cap rate Canada 2026")
     brave_invest = fetch_brave_search("Canadian CRE investment 2026")
 
     prompt = (
-        "Research Canadian commercial real estate (CRE) news for this week.\n\n"
+        "Research Canadian commercial real estate (CRE) news for this week. "
+        "This brief is sent by email to senior CRE executives, so format and "
+        "tone should be polished and professional — but still tight, no fluff.\n\n"
         "I've pre-fetched these data sources — use them as primary input:\n\n"
-        f"{brave_cre}\n\n"
-        f"{brave_renx}\n\n"
-        f"{brave_storeys}\n\n"
+        f"{rss_renx}\n\n"
+        f"{rss_storeys}\n\n"
+        f"{rss_insolvency}\n\n"
         f"{brave_cmhc}\n\n"
         f"{brave_caprate}\n\n"
         f"{brave_invest}\n\n"
         f"Today is {datetime.now().strftime('%B %d, %Y')}. "
-        "Use ONLY the pre-fetched data above for all specific prices, figures, and market levels — "
-        "do NOT use your training data for any market figures as it is outdated. "
-        "The data above is live and current.\n\n"
-        "Based on the above:\n"
-        "1. Identify major CRE transactions, policy changes, market trends\n"
-        "2. Track cap rate movements and investment activity\n"
-        "3. Use web_search for any breaking CRE news NOT covered above\n\n"
-        "Summarize top 5-6 articles, each with title + 100 word summary max.\n"
-        "Flag anything relevant to Klaus or CRE-LLM.\n"
-        "End with a single → Action line."
+        "Use ONLY the pre-fetched data above for all specific prices, figures, "
+        "and market levels — do NOT use your training data for any market "
+        "figures as it is outdated. The data above is live and current. "
+        "If a finding's source isn't in the pre-fetched data, use web_search "
+        "to verify before including it.\n\n"
+        "OUTPUT STRUCTURE — STRICT (downstream tooling depends on it):\n\n"
+        "Open with: '📎 Clippy | Weekly Canadian CRE Brief | <date>'\n\n"
+        "Then a **2-3 sentence executive summary** in plain prose — what's "
+        "the headline of the week? (No bullet list here. Read like a Bloomberg "
+        "Daybook lede.)\n\n"
+        "Then 3-5 named themes, each as a `## ICON N. Theme Name` level-2 "
+        "heading. Theme names should be specific (e.g., 'Cap Rate Compression "
+        "in Industrial', 'Hotel Distress / Receiverships', 'Office-to-Resi "
+        "Conversions', 'Multi-Family Transactions', 'Policy & Regulation'). "
+        "Use the headings to group findings, not to label individual articles.\n\n"
+        "Under each theme:\n"
+        "- 2-4 findings as bullet points\n"
+        "- Each finding: bolded headline + 50-80 word summary + source link "
+        "in parentheses\n"
+        "- Where relevant, include cap rates, $/sqft, transaction sizes, "
+        "and named parties (buyer/seller/broker)\n\n"
+        "Insolvency Insider items are valuable — distressed assets matter "
+        "for acquisition pipelines. The list above is UNFILTERED Canadian "
+        "filings; you must curate to CRE-relevant items only. Include: "
+        "real estate, REITs, retail (tenant collapses → vacancy), "
+        "hospitality (hotel chains, restaurants), construction, "
+        "developers, landlords, REITs, building owners. Skip: pure "
+        "fintech failures, unrelated industrial bankruptcies with no real "
+        "estate footprint, individual personal bankruptcies. When you "
+        "include one, give it its own theme if notable (e.g., a major "
+        "retailer's CCAA filing reshapes the retail CRE landscape).\n\n"
+        "Note on titles in RENx and Insolvency Insider sources: those are "
+        "derived from URL slugs (e.g., 'Hudson S Bay Ccaa Proceedings' "
+        "really means 'Hudson's Bay CCAA Proceedings'). Render them with "
+        "proper capitalization and apostrophes when you include them in "
+        "the brief. Use web_search to verify details if a slug-titled item "
+        "looks important.\n\n"
+        "End with two lines:\n"
+        "  '→ Watch this week:' one specific thing to monitor\n"
+        "  '→ Action:' one specific thing Robert (or readers) should consider doing\n\n"
+        "Flag anything directly relevant to Klaus or CRE-LLM in the relevant "
+        "theme inline (don't add a separate project section)."
     )
     return research("CRE Weekly", prompt, walnut_context, project_context)
 

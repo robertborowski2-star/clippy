@@ -28,7 +28,12 @@ log = logging.getLogger("clippy")
 def main():
     parser = argparse.ArgumentParser(description="Clippy — AI Research Agent")
     parser.add_argument("--no-bot", action="store_true", help="Run scheduler only, no Telegram bot")
-    parser.add_argument("--run", choices=["ai", "finance", "cre", "deep", "weekly"], help="Run a single job and exit")
+    parser.add_argument(
+        "--run",
+        choices=["ai", "finance", "cre", "deep", "science"],
+        help="Run a single job once and exit (manual trigger). "
+             "Useful for testing email/Telegram delivery without waiting for cron.",
+    )
     args = parser.parse_args()
 
     # Initialize memory system
@@ -43,7 +48,7 @@ def main():
             "cre": scheduler.run_cre_weekly,
             "finance": scheduler.run_finance_geo,
             "deep": scheduler.run_deep_dive,
-            "weekly": scheduler.run_weekly_summary,
+            "science": scheduler.run_science_roundup,
         }
         job_map[args.run]()
         return
