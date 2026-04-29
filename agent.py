@@ -13,7 +13,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-OPENROUTER_MODEL = "qwen/qwen3-235b-a22b"
+# Primary model via OpenRouter. Was qwen3-235b-a22b; switched 2026-04-29 to
+# the 30B MoE sibling for cost optimization. Monitoring output quality over
+# the next several days — if briefs degrade (sentinel-format violations in
+# science roundup, missing `## ` headings that break Darwin chunking, weaker
+# synthesis on deep dive), bump back to 235b.
+OPENROUTER_MODEL = "qwen/qwen3-30b-a3b"
 FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
