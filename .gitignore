@@ -1,0 +1,25 @@
+# Secrets and local overrides
+.env
+.env.local
+
+# Private working notes (not for public repo)
+CLAUDE.md
+.claude/
+
+# Python
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.log
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Editor / OS junk
+.DS_Store
+.idea/
+.vscode/
