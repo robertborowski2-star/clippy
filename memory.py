@@ -67,6 +67,33 @@ def read_walnut(name: str) -> str:
     return ""
 
 
+def get_latest_walnut_entry(name: str) -> str:
+    """Extract just the most recent timestamped entry from a walnut.
+
+    Walnuts grow by prepending: each `write_walnut(name, content)` wraps
+    its content as `\\n---\\n[timestamp]\\ncontent\\n---\\n` and inserts it
+    right after the `# Title` header line. So the latest entry sits between
+    the first and second `---` delimiters from the top of the file.
+
+    Returns the timestamped entry body (timestamp line + content), stripped
+    of `---` delimiters and surrounding whitespace. Returns "" if the walnut
+    is empty or has no entries (e.g., freshly created file with header only).
+    """
+    text = read_walnut(name)
+    if not text:
+        return ""
+    parts = text.split("\n---\n")
+    # parts[0] is the header ("# Title — Clippy Walnut\n\n").
+    # parts[1] is the latest entry body ("[timestamp]\ncontent...").
+    # parts[2] is empty (between the closing --- of latest and opening --- of next).
+    # parts[3+] are older entries.
+    for part in parts[1:]:
+        body = part.strip()
+        if body and body.startswith("["):
+            return body
+    return ""
+
+
 def read_project_walnut(project: str, file: str = "now") -> str:
     """
     Read a specific file from a project walnut.

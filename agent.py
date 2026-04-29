@@ -792,9 +792,9 @@ def deep_dive(ai_context: str = "", finance_context: str = "", cre_context: str 
         "doesn't exist today? Be specific and imaginative.\n\n"
         "Write 350-450 words. No project flags. No action items. "
         "End with one '→ Open question:' that Darwin should sit with.\n\n"
-        f"Today's AI & Fringe Science findings:\n{ai_context[:2000]}\n\n"
-        f"Today's Finance & Geopolitics findings:\n{finance_context[:1000]}\n\n"
-        f"Today's CRE findings:\n{cre_context[:1000]}\n\n"
+        f"Today's AI & Fringe Science findings:\n{ai_context[:8000]}\n\n"
+        f"Today's Finance & Geopolitics findings:\n{finance_context[:5000]}\n\n"
+        f"Today's most recent CRE findings (may be from earlier this week):\n{cre_context[:5000]}\n\n"
     )
     return research("Deep Dive", prompt)
 

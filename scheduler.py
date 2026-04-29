@@ -93,12 +93,18 @@ def run_cre_weekly():
 
 
 def run_deep_dive():
-    """21:00 daily — Deep dive on best finding across all topics and projects."""
+    """21:00 daily — Deep dive on best finding across all topics and projects.
+
+    Uses get_latest_walnut_entry (not read_walnut) so we feed Claude just
+    today's entries — not the full multi-week walnut history sliced to
+    arbitrary character counts. Without this, character truncation cut
+    mid-finding once ai-fringe grew to 10-12 findings (~7 KB output).
+    """
     log.info("Starting Deep Dive job")
     try:
-        ai_context = memory.read_walnut("ai-tech")
-        finance_context = memory.read_walnut("finance-geo")
-        cre_context = memory.read_walnut("cre-market")
+        ai_context = memory.get_latest_walnut_entry("ai-tech")
+        finance_context = memory.get_latest_walnut_entry("finance-geo")
+        cre_context = memory.get_latest_walnut_entry("cre-market")
         project_contexts = {
             "agent-network": memory.read_project_context("agent-network"),
             "klaus": memory.read_project_context("klaus"),
