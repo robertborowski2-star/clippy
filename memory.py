@@ -11,10 +11,15 @@ DB_PATH = CLIPPY_DIR / "clippy.db"
 
 # Clippy's own research walnuts (accumulated findings)
 WALNUT_FILES = {
-    "ai-tech":      WALNUTS_DIR / "ai-tech.md",
-    "cre-market":   WALNUTS_DIR / "cre-market.md",
-    "finance-geo":  WALNUTS_DIR / "finance-geo.md",
-    "deep-dives":   WALNUTS_DIR / "deep-dives.md",
+    "ai-tech":         WALNUTS_DIR / "ai-tech.md",
+    "cre-market":      WALNUTS_DIR / "cre-market.md",
+    "finance-geo":     WALNUTS_DIR / "finance-geo.md",
+    "deep-dives":      WALNUTS_DIR / "deep-dives.md",
+    "physics":         WALNUTS_DIR / "physics.md",
+    "mathematics":     WALNUTS_DIR / "mathematics.md",
+    "biology":         WALNUTS_DIR / "biology.md",
+    "chemistry":       WALNUTS_DIR / "chemistry.md",
+    "earth-materials": WALNUTS_DIR / "earth-materials.md",
 }
 
 # Project walnuts — Robert's active projects (read + append only)

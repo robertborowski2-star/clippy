@@ -86,6 +86,119 @@ def fetch_arxiv_papers(query: str = "AI agents LLM reasoning", max_results: int 
     except Exception as e:
         return f"[arXiv fetch failed: {e}]"
 
+
+def fetch_arxiv_by_category(categories: list, max_results: int = 50) -> str:
+    """
+    Fetch recent arXiv papers from specific categories.
+    categories: list of arXiv cat strings, e.g. ['math.NT', 'math.AG'] or ['math.*'].
+    """
+    try:
+        cat_query = " OR ".join(f"cat:{c}" for c in categories)
+        q = urllib.parse.quote(cat_query)
+        url = (
+            f"http://export.arxiv.org/api/query"
+            f"?search_query={q}&start=0&max_results={max_results}"
+            f"&sortBy=submittedDate&sortOrder=descending"
+        )
+
+        with urllib.request.urlopen(url, timeout=20) as r:
+            xml_data = r.read()
+
+        root = ET.fromstring(xml_data)
+        ns = {"atom": "http://www.w3.org/2005/Atom"}
+        entries = root.findall("atom:entry", ns)
+
+        papers = []
+        for entry in entries:
+            title = entry.find("atom:title", ns)
+            summary = entry.find("atom:summary", ns)
+            link = entry.find("atom:id", ns)
+            if title is not None and summary is not None:
+                t = title.text.strip().replace("\n", " ")
+                s = summary.text.strip().replace("\n", " ")[:250]
+                l = link.text.strip() if link is not None else ""
+                papers.append(f"- **{t}** ({l})\n  {s}…")
+
+        if papers:
+            return "\n".join(papers)
+        return ""
+    except Exception as e:
+        return f"[arXiv category fetch failed: {e}]"
+
+
+def fetch_chemrxiv(max_results: int = 50, days_back: int = 14) -> str:
+    """
+    Fetch recent ChemRxiv preprints via Crossref's public API, filtered by
+    ChemRxiv's DOI prefix (10.26434).
+
+    ChemRxiv's own API sits behind Cloudflare and rejects automated requests,
+    so we use Crossref as the source of truth. Crossref records carry titles
+    and DOIs but not abstracts for ChemRxiv deposits — title-only is fine for
+    a curated roundup.
+    """
+    try:
+        from datetime import date, timedelta
+        since = (date.today() - timedelta(days=days_back)).isoformat()
+        url = (
+            f"https://api.crossref.org/works"
+            f"?filter=prefix:10.26434,from-pub-date:{since}"
+            f"&rows={max_results}&sort=published&order=desc"
+            f"&mailto=clippy@local"
+        )
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read())
+
+        items = data.get("message", {}).get("items", [])
+        papers = []
+        for item in items[:max_results]:
+            title_list = item.get("title") or [""]
+            title = title_list[0].strip().replace("\n", " ") if title_list else ""
+            doi = item.get("DOI", "")
+            link = f"https://doi.org/{doi}" if doi else ""
+            pub = item.get("published", {}).get("date-parts", [[None]])[0]
+            pub_str = "-".join(str(p) for p in pub if p) if pub and pub[0] else ""
+            if title:
+                papers.append(f"- **{title}** ({link}) [{pub_str}]")
+
+        if papers:
+            return "\n".join(papers)
+        return ""
+    except Exception as e:
+        return f"[ChemRxiv fetch failed: {e}]"
+
+
+def fetch_eartharxiv(max_results: int = 50) -> str:
+    """
+    Fetch recent EarthArxiv preprints via OSF's public API.
+    EarthArxiv is hosted on OSF; no API key needed.
+    """
+    try:
+        url = (
+            f"https://api.osf.io/v2/preprints/"
+            f"?filter[provider]=eartharxiv"
+            f"&page[size]={max_results}"
+            f"&sort=-date_published"
+        )
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read())
+
+        papers = []
+        for entry in data.get("data", [])[:max_results]:
+            attrs = entry.get("attributes", {})
+            title = (attrs.get("title") or "").strip().replace("\n", " ")
+            desc = (attrs.get("description") or "").strip().replace("\n", " ")[:250]
+            link = entry.get("links", {}).get("html", "")
+            if title:
+                papers.append(f"- **{title}** ({link})\n  {desc}…")
+
+        if papers:
+            return "\n".join(papers)
+        return ""
+    except Exception as e:
+        return f"[EarthArxiv fetch failed: {e}]"
+
 def load_voice_corrections() -> str:
     """Load voice correction examples to guide Clippy's writing style."""
     from pathlib import Path
@@ -246,7 +359,7 @@ def research(job_name: str, prompt: str, walnut_context: str = "", project_conte
                 json={
                     "model": OPENROUTER_MODEL,
                     "messages": or_messages,
-                    "max_tokens": 4096,
+                    "max_tokens": 8192,
                     "temperature": 0,
                     "plugins": [{"id": "web", "max_results": 5}],
                 },
@@ -261,7 +374,7 @@ def research(job_name: str, prompt: str, walnut_context: str = "", project_conte
     client = anthropic.Anthropic()
     response = client.messages.create(
         model=FALLBACK_MODEL,
-        max_tokens=4096,
+        max_tokens=8192,
         system=system_prompt,
         tools=[{"type": "web_search_20250305", "name": "web_search"}],
         messages=messages,
@@ -279,7 +392,7 @@ def research(job_name: str, prompt: str, walnut_context: str = "", project_conte
         })
         response = client.messages.create(
             model=FALLBACK_MODEL,
-            max_tokens=4096,
+            max_tokens=8192,
             system=system_prompt,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=messages,
@@ -344,7 +457,7 @@ def ai_fringe_research(walnut_context: str = "", project_context: str = "") -> s
         "engineering, systems science, computer science, quantitative finance. "
         "Cast wide. The most interesting finding might come from any domain.\n"
         "3. Use web_search for any breaking news NOT covered above\n\n"
-        "Summarize top 5-6 findings total. For each finding:\n"
+        "Summarize top 10-12 findings total. For each finding:\n"
         "- Title + 80 word summary of what it is\n"
         "- One line: 'Assumption it challenges:' — what accepted belief does this push back on?\n"
         "- One line: 'Cross-domain signal:' — what other field does this remind you of or connect to?\n"
@@ -457,27 +570,91 @@ def deep_dive(ai_context: str = "", finance_context: str = "", cre_context: str 
     return research("Deep Dive", prompt)
 
 
-def weekly_summary(ai_context: str = "", finance_context: str = "", cre_context: str = "", project_contexts: dict = None) -> str:
-    """Monday 08:00 — Weekly intel summary with project-specific action items."""
-    project_contexts = project_contexts or {}
-    project_block = "".join(
-        f"\n=== {name.upper()} ===\n{ctx[:600]}\n"
-        for name, ctx in project_contexts.items() if ctx
+def science_roundup_research(walnut_contexts: dict = None) -> str:
+    """
+    Saturday 01:00 weekly — broad science roundup across physics, mathematics,
+    biology, chemistry, and earth/materials. Pulls from arXiv categories
+    plus ChemRxiv (chemistry) and EarthArxiv (earth).
+
+    Output is a single string with five sections delimited by sentinels of the
+    form `===SECTION:NAME===`. The scheduler splits on these and writes each
+    section to its corresponding walnut. Each section internally uses
+    `## ICON N. Title` level-2 headings so Darwin can chunk per-finding.
+
+    walnut_contexts: optional dict mapping subject name to prior walnut text,
+    used for "avoid repeating" guidance. Keys: physics, mathematics, biology,
+    chemistry, earth-materials.
+    """
+    walnut_contexts = walnut_contexts or {}
+
+    physics_papers = fetch_arxiv_by_category(
+        ["astro-ph.*", "gr-qc", "hep-th", "hep-ph", "quant-ph",
+         "cond-mat.str-el", "cond-mat.supr-con"],
+        max_results=50,
     )
+    math_papers = fetch_arxiv_by_category(["math.*"], max_results=50)
+    biology_papers = fetch_arxiv_by_category(["q-bio.*"], max_results=50)
+    chem_arxiv = fetch_arxiv_by_category(["physics.chem-ph"], max_results=30)
+    chem_chemrxiv = fetch_chemrxiv(max_results=50)
+    earth_arxiv = fetch_arxiv_by_category(
+        ["cond-mat.mtrl-sci", "cond-mat.soft", "physics.geo-ph", "physics.flu-dyn"],
+        max_results=50,
+    )
+    earth_eartharxiv = fetch_eartharxiv(max_results=50)
+
+    def _ctx_snippet(key: str) -> str:
+        prior = walnut_contexts.get(key, "")
+        return prior[-1500:] if prior else "(none)"
 
     prompt = (
-        "Synthesize the past week's research into a weekly intelligence summary.\n\n"
-        "Structure:\n"
-        "1. **Top AI & Fringe Science Themes** — 3 biggest developments this week\n"
-        "2. **Top Finance & Geopolitics Themes** — 3 biggest developments this week\n"
-        "3. **Top CRE Themes** — 3 biggest CRE developments\n"
-        "4. **Project Relevance** — For each active project (Agent Network, Klaus, CRE-LLM), "
-        "what from this week's research is most relevant? One bullet per project.\n"
-        "5. **Action Items** — What should Robert act on this week?\n"
-        "6. **Watch List** — What to monitor going forward?\n\n"
-        f"AI & Fringe Science findings from this week:\n{ai_context[-3000:]}\n\n"
-        f"Finance & Geopolitics findings from this week:\n{finance_context[-3000:]}\n\n"
-        f"CRE findings from this week:\n{cre_context[-3000:]}\n\n"
-        f"Active project context:\n{project_block}"
+        "Weekly science roundup. Survey recent research across five subjects "
+        "and surface the 8-10 most interesting findings PER SUBJECT.\n\n"
+        f"Today is {datetime.now().strftime('%B %d, %Y')}.\n\n"
+        "OUTPUT FORMAT — STRICT:\n"
+        "Produce five sections in this exact order, each preceded by its sentinel:\n"
+        "  ===SECTION:PHYSICS===\n"
+        "  ===SECTION:MATHEMATICS===\n"
+        "  ===SECTION:BIOLOGY===\n"
+        "  ===SECTION:CHEMISTRY===\n"
+        "  ===SECTION:EARTH-MATERIALS===\n\n"
+        "Within each section:\n"
+        "- Start with: '📎 Clippy | <Subject> Roundup | <date>'\n"
+        "- 8-10 findings, each formatted as a `## ICON N. Title` level-2 heading "
+        "(this matters — downstream tooling chunks on `## `).\n"
+        "- Under each heading: 60-100 word summary, then on a new line:\n"
+        "  'Why it matters:' one sentence on what this challenges or unlocks.\n"
+        "  'Cross-domain signal:' one sentence linking to another field.\n"
+        "- End each section with: '→ Open question:' one line on the most "
+        "intellectually unresolved thread.\n"
+        "- Do NOT include any prose between sentinels and the section header.\n\n"
+        "PHYSICS — sources to draw from:\n"
+        "## arXiv: Physics (astro-ph, gr-qc, hep-*, quant-ph, cond-mat correlated)\n"
+        f"{physics_papers}\n\n"
+        f"Prior physics walnut (avoid repeating): {_ctx_snippet('physics')}\n\n"
+        "MATHEMATICS — sources to draw from:\n"
+        "## arXiv: Mathematics (math.*)\n"
+        f"{math_papers}\n\n"
+        f"Prior mathematics walnut (avoid repeating): {_ctx_snippet('mathematics')}\n\n"
+        "BIOLOGY — sources to draw from:\n"
+        "## arXiv: Quantitative Biology (q-bio.*)\n"
+        f"{biology_papers}\n\n"
+        f"Prior biology walnut (avoid repeating): {_ctx_snippet('biology')}\n\n"
+        "CHEMISTRY — sources to draw from:\n"
+        "## arXiv: Chemical Physics (physics.chem-ph)\n"
+        f"{chem_arxiv}\n\n"
+        "## ChemRxiv recent preprints\n"
+        f"{chem_chemrxiv}\n\n"
+        f"Prior chemistry walnut (avoid repeating): {_ctx_snippet('chemistry')}\n\n"
+        "EARTH & MATERIALS — sources to draw from:\n"
+        "## arXiv: Materials & Earth-adjacent (cond-mat.mtrl-sci, cond-mat.soft, "
+        "physics.geo-ph, physics.flu-dyn)\n"
+        f"{earth_arxiv}\n\n"
+        "## EarthArxiv recent preprints\n"
+        f"{earth_eartharxiv}\n\n"
+        f"Prior earth-materials walnut (avoid repeating): {_ctx_snippet('earth-materials')}\n\n"
+        "Pick what is most interesting, not most recent. Cast wide. "
+        "Prefer findings that challenge assumptions or connect across subfields. "
+        "Use ONLY the pre-fetched data above — do NOT use training data for any "
+        "specific figures or claims; that data is outdated.\n"
     )
-    return research("Weekly Intel Summary", prompt)
+    return research("Science Roundup", prompt)
