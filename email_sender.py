@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import smtplib
 from datetime import datetime
 from email.mime.multipart import MIMEMultipart
@@ -55,6 +56,20 @@ HTML_WRAPPER = (
     '{footer}'
     '</body></html>'
 )
+
+
+# Matches a leading "📎 Clippy | <anything> | <anything>" line that the
+# research() system prompt instructs every brief to start with. The CRE
+# email's subject already carries the brief name + date, so this header is
+# redundant and looks unprofessional to external readers. We strip it from
+# the body before email rendering, and ONLY for the email path — the
+# walnut, Telegram, and Darwin paths keep the header intact.
+_CLIPPY_HEADER_RE = re.compile(r"^\s*📎\s*Clippy\s*\|.*\|.*?\n+", re.IGNORECASE)
+
+
+def _strip_clippy_header(body: str) -> str:
+    """Remove a leading 'Clippy | ... | ...' line, if present."""
+    return _CLIPPY_HEADER_RE.sub("", body, count=1).lstrip()
 
 
 def get_recipients() -> list:
@@ -115,8 +130,10 @@ def send_cre_brief(markdown_body: str) -> bool:
         log.warning("email_sender: empty body; skipping email send")
         return False
 
+    cleaned_body = _strip_clippy_header(markdown_body)
+
     try:
-        msg = _build_message(markdown_body, smtp_user, recipients)
+        msg = _build_message(cleaned_body, smtp_user, recipients)
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT_SEC) as server:
             server.login(smtp_user, smtp_pass)
             # send_message strips the Bcc header before transmitting and

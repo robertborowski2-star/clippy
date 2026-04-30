@@ -690,13 +690,18 @@ def finance_geo_research(walnut_context: str = "") -> str:
 
 
 def cre_market_research(walnut_context: str = "", project_context: str = "") -> str:
-    """Monday 10:00 — CRE Weekly research, guided by Klaus + CRE-LLM project context.
+    """Monday 10:00 — CRE Weekly research.
 
     Output is structured for both walnut accumulation AND email delivery to
     a colleague distribution list. Slightly more polished than other jobs:
     executive summary intro, named themes as `## ` level-2 headings, and
     sourced findings under each theme. The `## ` headings remain intact so
     Darwin's chunker still works.
+
+    Note: project_context is accepted by the signature for compatibility with
+    the scheduler's existing call shape, but is intentionally NOT forwarded
+    to research(). The CRE brief goes to colleagues — Robert's personal
+    project context (Klaus, CRE-LLM) must NOT leak into it.
     """
 
     # Direct trade-press feeds. Storeys = real RSS; RENx and Insolvency
@@ -716,7 +721,9 @@ def cre_market_research(walnut_context: str = "", project_context: str = "") -> 
     prompt = (
         "Research Canadian commercial real estate (CRE) news for this week. "
         "This brief is sent by email to senior CRE executives, so format and "
-        "tone should be polished and professional — but still tight, no fluff.\n\n"
+        "tone should be polished and professional — but still tight, no fluff. "
+        "It is a market news brief only. Do NOT mention any internal projects, "
+        "products, or personal context in the output.\n\n"
         "I've pre-fetched these data sources — use them as primary input:\n\n"
         f"{rss_renx}\n\n"
         f"{rss_storeys}\n\n"
@@ -731,31 +738,39 @@ def cre_market_research(walnut_context: str = "", project_context: str = "") -> 
         "If a finding's source isn't in the pre-fetched data, use web_search "
         "to verify before including it.\n\n"
         "OUTPUT STRUCTURE — STRICT (downstream tooling depends on it):\n\n"
-        "Open with: '📎 Clippy | Weekly Canadian CRE Brief | <date>'\n\n"
-        "Then a **2-3 sentence executive summary** in plain prose — what's "
-        "the headline of the week? (No bullet list here. Read like a Bloomberg "
-        "Daybook lede.)\n\n"
+        "Start the output with a 2-3 sentence executive summary in plain prose. "
+        "Do NOT prepend any 'Clippy' header, agent name, or date line — the email "
+        "subject already carries that. The first words of the brief are the "
+        "executive summary. (Read like a Bloomberg Daybook lede — no bullets here.)\n\n"
         "Then 3-5 named themes, each as a `## ICON N. Theme Name` level-2 "
-        "heading. Theme names should be specific (e.g., 'Cap Rate Compression "
-        "in Industrial', 'Hotel Distress / Receiverships', 'Office-to-Resi "
-        "Conversions', 'Multi-Family Transactions', 'Policy & Regulation'). "
-        "Use the headings to group findings, not to label individual articles.\n\n"
+        "heading. Theme names must be specific to Canadian commercial real "
+        "estate (examples: 'Cap Rate Compression in Industrial', "
+        "'Distress / Receiverships', 'Office-to-Resi Conversions', "
+        "'Multi-Family Transactions', 'Policy & Regulation'). Use the "
+        "headings to group findings, not to label individual articles.\n\n"
         "Under each theme:\n"
         "- 2-4 findings as bullet points\n"
         "- Each finding: bolded headline + 50-80 word summary + source link "
         "in parentheses\n"
         "- Where relevant, include cap rates, $/sqft, transaction sizes, "
         "and named parties (buyer/seller/broker)\n\n"
-        "Insolvency Insider items are valuable — distressed assets matter "
-        "for acquisition pipelines. The list above is UNFILTERED Canadian "
-        "filings; you must curate to CRE-relevant items only. Include: "
-        "real estate, REITs, retail (tenant collapses → vacancy), "
-        "hospitality (hotel chains, restaurants), construction, "
-        "developers, landlords, REITs, building owners. Skip: pure "
-        "fintech failures, unrelated industrial bankruptcies with no real "
-        "estate footprint, individual personal bankruptcies. When you "
-        "include one, give it its own theme if notable (e.g., a major "
-        "retailer's CCAA filing reshapes the retail CRE landscape).\n\n"
+        "STRICT CURATION RULES for the Distress / Receiverships theme:\n"
+        "Insolvency Insider's feed above is UNFILTERED Canadian filings. "
+        "INCLUDE an item ONLY if the filing entity directly owns, operates, "
+        "or has primary business activity in: real estate, REITs, retail "
+        "with physical store footprint, hospitality (hotels, restaurants "
+        "with physical locations), construction, developers, landlords, "
+        "homebuilders, or property management. SKIP: tech / AI / SaaS / "
+        "fintech firms, agriculture or farming (unless they're a publicly-"
+        "traded agricultural REIT or have substantial commercial real "
+        "estate land holdings), pure financial-services firms, individual "
+        "personal bankruptcies, professional-services firms (law, "
+        "accounting). When unsure whether a filing has real-estate exposure, "
+        "leave it out. If NO Insolvency Insider items qualify after this "
+        "filter, the Distress section reads exactly: "
+        "'_No notable real-estate-related filings this week._' — and you "
+        "still include the theme heading. Do NOT pad with unrelated "
+        "filings to fill space.\n\n"
         "Note on titles in RENx and Insolvency Insider sources: those are "
         "derived from URL slugs (e.g., 'Hudson S Bay Ccaa Proceedings' "
         "really means 'Hudson's Bay CCAA Proceedings'). Render them with "
@@ -764,11 +779,11 @@ def cre_market_research(walnut_context: str = "", project_context: str = "") -> 
         "looks important.\n\n"
         "End with two lines:\n"
         "  '→ Watch this week:' one specific thing to monitor\n"
-        "  '→ Action:' one specific thing Robert (or readers) should consider doing\n\n"
-        "Flag anything directly relevant to Klaus or CRE-LLM in the relevant "
-        "theme inline (don't add a separate project section)."
+        "  '→ Action:' one specific thing readers should consider doing\n\n"
+        "Reminder: this brief is for external readers. Do NOT reference any "
+        "internal projects, codenames, or backlog items. Markets news only."
     )
-    return research("CRE Weekly", prompt, walnut_context, project_context)
+    return research("CRE Weekly", prompt, walnut_context)
 
 
 def deep_dive(ai_context: str = "", finance_context: str = "", cre_context: str = "", project_contexts: dict = None) -> str:
