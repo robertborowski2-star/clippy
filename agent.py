@@ -396,10 +396,23 @@ def load_voice_corrections() -> str:
             return content
     return ""
 
-def fetch_brave_search(query: str, count: int = 5) -> str:
+def fetch_brave_search(query: str, count: int = 8, freshness: str = "pw") -> str:
     """
-    Search the web via Brave Search API.
-    Better quality results than generic web search for specific queries.
+    Search the web via Brave Search API. Returns a markdown section with
+    title, age, full description, and up to 2 extra snippets per result.
+
+    count: number of results (1–20, default 8).
+    freshness: time filter — 'pd' (past day), 'pw' (past week, default),
+               'pm' (past month), 'py' (past year), or 'all' to disable.
+               Tighter freshness = fewer stale snippets the LLM can mistake
+               for current data. Default 'pw' is the safe middle ground;
+               finance jobs should pass 'pd' for breaking-news queries.
+
+    Each result is rendered with the age tag when present, the full
+    description (no 150-char cap — that was strangling the LLM's grounding),
+    and up to 2 extra_snippets per result. This gives ~500–1500 chars of
+    real text per result, so the LLM has substance to ground in instead of
+    pattern-matching from training data.
     """
     try:
         api_key = os.environ.get("BRAVE_API_KEY", "")
@@ -412,7 +425,14 @@ def fetch_brave_search(query: str, count: int = 5) -> str:
             "Accept-Encoding": "gzip",
             "X-Subscription-Token": api_key,
         }
-        params = urllib.parse.urlencode({"q": query, "count": count})
+        params_dict = {
+            "q": query,
+            "count": min(count, 20),
+            "extra_snippets": 1,
+        }
+        if freshness and freshness != "all":
+            params_dict["freshness"] = freshness
+        params = urllib.parse.urlencode(params_dict)
         req = urllib.request.Request(f"{url}?{params}", headers=headers)
 
         import gzip
@@ -428,8 +448,20 @@ def fetch_brave_search(query: str, count: int = 5) -> str:
         for item in results:
             title = item.get("title", "")
             link = item.get("url", "")
-            desc = item.get("description", "")[:150]
-            lines.append(f"- **{title}**\n  {desc}\n  {link}")
+            desc = item.get("description", "")
+            age = item.get("age", "")
+            extras = item.get("extra_snippets", []) or []
+
+            block = f"- **{title}**"
+            if age:
+                block += f" _(age: {age})_"
+            if desc:
+                block += f"\n  {desc}"
+            for snip in extras[:2]:
+                if snip:
+                    block += f"\n  · {snip}"
+            block += f"\n  {link}"
+            lines.append(block)
 
         return "\n".join(lines)
     except Exception as e:
@@ -657,35 +689,84 @@ def ai_fringe_research(walnut_context: str = "", project_context: str = "") -> s
 
 
 def finance_geo_research(walnut_context: str = "") -> str:
-    """16:00 daily — Finance & Geopolitics research via Brave Search + arXiv."""
+    """16:00 daily — Finance & Geopolitics research via Brave Search + arXiv.
 
-    brave_markets = fetch_brave_search("financial markets today")
-    brave_central = fetch_brave_search("Federal Reserve Bank of Canada ECB news today")
-    brave_energy = fetch_brave_search("OPEC oil price energy markets news today")
-    brave_geopolitics = fetch_brave_search("trade war sanctions geopolitical conflict today")
-    brave_indices = fetch_brave_search("S&P 500 bond yields commodities today")
-    arxiv_econ = fetch_arxiv_papers("monetary policy financial markets macroeconomics", max_results=4)
+    Pre-fetches a broad set of date-anchored Brave queries with `freshness=pd`
+    (past day) so the LLM has 50+ KB of fresh, grounded snippets to work
+    from. Generic queries like "financial markets today" returned thin
+    headlines that the LLM would pad with hallucinated training-data figures
+    (e.g., inventing Fed rates, oil prices, and "incoming Chair Warsh"
+    narratives that hadn't been true in years). Date-anchored queries with
+    full descriptions + extra snippets force the model to ground in real
+    current data or write a shorter brief.
+    """
+
+    today = datetime.now()
+    month_year = today.strftime("%B %Y")
+
+    brave_queries = [
+        f"Federal Reserve interest rate decision {month_year}",
+        f"Bank of Canada interest rate {month_year}",
+        f"ECB monetary policy {month_year}",
+        "S&P 500 close today",
+        "Nasdaq close today",
+        "TSX index close today",
+        "Brent crude oil price today",
+        "WTI crude oil price today",
+        "gold price today",
+        "10 year Treasury yield today",
+        "Canadian dollar USD exchange rate today",
+        f"OPEC meeting {month_year}",
+        "China economy news today",
+        "Middle East geopolitics news today",
+        "Canadian energy stocks news today",
+    ]
+    brave_data = "\n\n".join(
+        fetch_brave_search(q, count=8, freshness="pd") for q in brave_queries
+    )
+
+    arxiv_econ = fetch_arxiv_papers(
+        "monetary policy financial markets macroeconomics", max_results=4
+    )
 
     prompt = (
         "Research finance and geopolitics news for today.\n\n"
-        "I've pre-fetched these data sources — use them as primary input:\n\n"
-        f"{brave_markets}\n\n"
-        f"{brave_central}\n\n"
-        f"{brave_energy}\n\n"
-        f"{brave_geopolitics}\n\n"
-        f"{brave_indices}\n\n"
+        f"Today is {today.strftime('%A, %B %d, %Y')}.\n\n"
+        "I've pre-fetched fresh web search results below (Brave Search, "
+        "filtered to past 24 hours). Use these as your PRIMARY and ONLY "
+        "source for current figures.\n\n"
+        f"{brave_data}\n\n"
         f"{arxiv_econ}\n\n"
-        f"Today is {datetime.now().strftime('%B %d, %Y')}. "
-        "Use ONLY the pre-fetched data above for all prices and market levels — do NOT use your training data for any market figures. "
-        "The data above is live and current. Your training data for prices is outdated.\n\n"
-        "Based on the above:\n"
-        "1. Identify the most significant market moves and central bank actions\n"
-        "2. Flag geopolitical developments with market implications\n"
-        "3. Use web_search for any breaking financial news NOT covered above\n\n"
-        "Summarize top 2-3 findings, each with title + 100 word summary max.\n"
-        "Flag anything relevant to Robert's portfolio "
-        "(he holds energy ETFs, gold, Canadian equities).\n"
-        "End with a single → Action line."
+        "STRICT GROUNDING RULES — these are not suggestions:\n"
+        "1. Every specific figure (rates, prices, index levels, yields, "
+        "spreads) MUST appear verbatim or near-verbatim in the Brave Search "
+        "snippets above. If you cannot find a figure in the snippets, OMIT "
+        "it. Do NOT fill in plausible-sounding numbers from training data.\n"
+        "2. Every dated event (meetings, decisions, reports, speeches) MUST "
+        "be findable in the snippets and dated within the last 30 days. If "
+        "you cannot find a recent date, do NOT mention the event.\n"
+        "3. Every named person (officials, executives, politicians) MUST "
+        "appear in the snippets. Do NOT name people from memory — "
+        "leadership turns over and your training data is stale.\n"
+        "4. Do NOT use template phrases that you would write regardless of "
+        "today's news. Forbidden examples: 'Middle East tensions remain "
+        "elevated', 'tariff risks loom', 'rotate Canadian equities into "
+        "energy/materials', 'maximum pressure', 'wartime highs'. These are "
+        "tells of training-data padding, not current reporting.\n"
+        "5. Cite at least one source URL per finding. If you cannot cite, "
+        "you do not have grounding for that finding — drop it.\n"
+        "6. If the snippets are thin or contradictory, write a shorter "
+        "brief or fewer findings. A 2-finding brief grounded in real "
+        "snippets is infinitely better than a 5-finding brief padded with "
+        "fabricated specifics.\n\n"
+        "Summarize the top 3-5 findings. For each:\n"
+        "- Title + 80-120 word summary built from the snippets\n"
+        "- At least one source URL in parentheses\n"
+        "Flag anything relevant to Robert's portfolio (he holds energy "
+        "ETFs, gold, Canadian equities) — but only if you can substantiate "
+        "the connection from real snippet content.\n"
+        "End with a single → Action line that follows from the findings, "
+        "not from generic portfolio advice."
     )
     return research("Finance & Geopolitics", prompt, walnut_context)
 
@@ -715,9 +796,30 @@ def cre_market_research(walnut_context: str = "", project_context: str = "") -> 
     rss_insolvency = fetch_insolvency_insider(max_items=15)
 
     # Brave Search — broader market context the trade press may not catch.
-    brave_cmhc = fetch_brave_search("CMHC housing market Canada")
-    brave_caprate = fetch_brave_search("cap rate Canada 2026")
-    brave_invest = fetch_brave_search("Canadian CRE investment 2026")
+    # Date-anchored queries with freshness=past week so the LLM grounds in
+    # real current data rather than padding from training. CRE freshness is
+    # 'pw' (not 'pd' like finance-geo) because CRE news moves slower —
+    # weekly cadence is the right window for cap rate moves, transactions,
+    # and policy signals.
+    today = datetime.now()
+    month_year = today.strftime("%B %Y")
+    brave_queries = [
+        f"Canadian commercial real estate news {month_year}",
+        f"Toronto office market {month_year}",
+        f"Vancouver industrial real estate {month_year}",
+        f"Canadian REIT news {month_year}",
+        f"CMHC housing report {month_year}",
+        "Canadian retail real estate distress this week",
+        "Canadian multi-family REIT this week",
+        f"Canadian industrial cap rate {month_year}",
+        "Canadian commercial mortgage rates this week",
+        "CCAA Canada real estate filings this week",
+        f"Canadian construction starts {month_year}",
+        f"Canadian CRE transactions {month_year}",
+    ]
+    brave_data = "\n\n".join(
+        fetch_brave_search(q, count=8, freshness="pw") for q in brave_queries
+    )
 
     prompt = (
         "Research Canadian commercial real estate (CRE) news for this week. "
@@ -725,19 +827,29 @@ def cre_market_research(walnut_context: str = "", project_context: str = "") -> 
         "tone should be polished and professional — but still tight, no fluff. "
         "It is a market news brief only. Do NOT mention any internal projects, "
         "products, or personal context in the output.\n\n"
-        "I've pre-fetched these data sources — use them as primary input:\n\n"
+        f"Today is {today.strftime('%A, %B %d, %Y')}.\n\n"
+        "I've pre-fetched these data sources (trade-press RSS + sitemaps + "
+        "fresh Brave Search results filtered to past week) — use them as "
+        "your PRIMARY and ONLY source for figures and named transactions:\n\n"
         f"{rss_renx}\n\n"
         f"{rss_storeys}\n\n"
         f"{rss_insolvency}\n\n"
-        f"{brave_cmhc}\n\n"
-        f"{brave_caprate}\n\n"
-        f"{brave_invest}\n\n"
-        f"Today is {datetime.now().strftime('%B %d, %Y')}. "
-        "Use ONLY the pre-fetched data above for all specific prices, figures, "
-        "and market levels — do NOT use your training data for any market "
-        "figures as it is outdated. The data above is live and current. "
-        "If a finding's source isn't in the pre-fetched data, use web_search "
-        "to verify before including it.\n\n"
+        f"{brave_data}\n\n"
+        "STRICT GROUNDING RULES — these are not suggestions:\n"
+        "1. Every cap rate, $/sqft, transaction size, named buyer/seller/"
+        "broker, and named property MUST appear in the pre-fetched data "
+        "above. If a specific is not in the data, OMIT it. Do NOT fill in "
+        "plausible-sounding figures from training data.\n"
+        "2. Every dated event (closings, filings, policy announcements) "
+        "MUST be findable in the data and dated within the last 30 days.\n"
+        "3. Every cited source URL must come from the data above.\n"
+        "4. Do NOT use template phrases that you'd write regardless of the "
+        "week's actual news. Forbidden examples: 'cap rates remain "
+        "compressed', 'capital remains on the sidelines', 'investor "
+        "sentiment is cautiously optimistic'. These are filler.\n"
+        "5. If the data is thin on a theme, write fewer findings or drop "
+        "the theme. A 3-theme brief grounded in real data is better than a "
+        "5-theme brief padded with fabrications.\n\n"
         "OUTPUT STRUCTURE — STRICT (downstream tooling depends on it):\n\n"
         "Start the output with a 2-3 sentence executive summary in plain prose. "
         "Do NOT prepend any 'Clippy' header, agent name, or date line — the email "
