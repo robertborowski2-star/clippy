@@ -1,4 +1,4 @@
-"""Scheduler — 5 research jobs on cron using APScheduler."""
+"""Scheduler — 4 research jobs on cron using APScheduler."""
 
 import logging
 import re
@@ -7,7 +7,6 @@ from apscheduler.triggers.cron import CronTrigger
 
 import agent
 import darwin_hook
-import email_sender
 import memory
 import telegram_bot
 
@@ -58,40 +57,6 @@ def run_finance_geo():
         telegram_bot.send_message(f"📎 Clippy | ERROR | Finance & Geopolitics research failed: {e}")
 
 
-def run_cre_weekly():
-    """Monday 10:00 — CRE Weekly research, informed by Klaus + CRE-LLM walnuts."""
-    log.info("Starting CRE Weekly research job")
-    try:
-        research_context = memory.read_walnut("cre-market")
-        klaus_context = memory.read_project_context("klaus")
-        cre_llm_context = memory.read_project_context("cre-llm")
-        project_context = (
-            "=== KLAUS PROJECT ===\n" + klaus_context +
-            "\n\n=== CRE-LLM PROJECT ===\n" + cre_llm_context
-        )
-
-        result = agent.cre_market_research(
-            walnut_context=research_context,
-            project_context=project_context,
-        )
-
-        memory.write_walnut("cre-market", result)
-        memory.log_research("CRE Weekly", result, "cre-market")
-        memory.append_project_log("klaus", result)
-        memory.append_project_log("cre-llm", result)
-
-        # Phase 1 (2026-04-29 → ~2 weeks): send via BOTH Telegram and email
-        # so we have a safety net while verifying the email rendering on
-        # different mail clients. After 2 successful Mondays, drop Telegram.
-        telegram_bot.send_message(result)
-        email_sender.send_cre_brief(result)
-        darwin_hook.post_findings("cre-market", result)
-        log.info("CRE Weekly research job complete")
-    except Exception as e:
-        log.error(f"CRE Weekly research failed: {e}")
-        telegram_bot.send_message(f"📎 Clippy | ERROR | CRE Weekly research failed: {e}")
-
-
 def run_deep_dive():
     """21:00 daily — Deep dive on best finding across all topics and projects.
 
@@ -104,7 +69,6 @@ def run_deep_dive():
     try:
         ai_context = memory.get_latest_walnut_entry("ai-tech")
         finance_context = memory.get_latest_walnut_entry("finance-geo")
-        cre_context = memory.get_latest_walnut_entry("cre-market")
         project_contexts = {
             "agent-network": memory.read_project_context("agent-network"),
             "klaus": memory.read_project_context("klaus"),
@@ -114,7 +78,6 @@ def run_deep_dive():
         result = agent.deep_dive(
             ai_context=ai_context,
             finance_context=finance_context,
-            cre_context=cre_context,
             project_contexts=project_contexts,
         )
 
@@ -183,7 +146,7 @@ def run_science_roundup():
 
 
 def start() -> BackgroundScheduler:
-    """Start the scheduler with all 5 research jobs."""
+    """Start the scheduler with all 4 research jobs."""
     sched = BackgroundScheduler()
 
     # Daily AI & Fringe Science — 07:45
@@ -201,15 +164,6 @@ def start() -> BackgroundScheduler:
         CronTrigger(hour=16, minute=0),
         id="finance_geo",
         name="Finance & Geopolitics",
-        misfire_grace_time=3600,
-    )
-
-    # Weekly CRE — Monday 10:00
-    sched.add_job(
-        run_cre_weekly,
-        CronTrigger(day_of_week="mon", hour=10, minute=0),
-        id="cre_weekly",
-        name="CRE Weekly",
         misfire_grace_time=3600,
     )
 
@@ -232,5 +186,5 @@ def start() -> BackgroundScheduler:
     )
 
     sched.start()
-    log.info("Scheduler started with 5 jobs")
+    log.info("Scheduler started with 4 jobs")
     return sched

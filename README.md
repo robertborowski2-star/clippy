@@ -1,15 +1,15 @@
 # Clippy — AI Research Agent
 
-Daily AI & CRE research agent that runs on Raspberry Pi 4 alongside Nova. Sends briefings to Telegram.
+Daily AI & research agent that runs on Raspberry Pi 4 alongside Nova. Sends briefings to Telegram.
 
 ## Schedule
 
 | Time | Job | Description |
 |------|-----|-------------|
-| 09:00 daily | AI & Tech | HN, arXiv, AI news → top 5 findings |
-| 18:00 daily | CRE & Market | RENx, Storeys, CMHC → top 3-5 headlines |
-| 21:00 daily | Deep Dive | 300-400 word analysis of best finding |
-| Mon 08:00 | Weekly Intel | Synthesize week's findings + action items |
+| 07:45 daily | AI & Fringe Science | HN, arXiv, AI news → top findings |
+| 16:00 daily | Finance & Geopolitics | Brave Search market data → top findings |
+| 21:00 daily | Deep Dive | 350-450 word analysis of best finding |
+| Sat 01:00 | Science Roundup | Weekly arXiv/ChemRxiv/EarthArxiv across 5 subjects |
 
 ## Setup on NintendoPI
 
@@ -98,15 +98,16 @@ tail -f ~/clippy/clippy.log
 | `/start` | Show help |
 | `/ask <question>` | Ask Clippy anything (uses Claude + web search) |
 | `/status` | Show recent research activity |
-| `/run <ai\|cre\|deep\|weekly>` | Manually trigger a job |
+| `/run <ai\|finance\|deep\|science>` | Manually trigger a job |
 | `/walnut <name>` | Read a walnut file |
 
 ## Walnut System
 
 Findings accumulate in `~/clippy/walnuts/`:
-- `ai-tech.md` — AI & tech findings
-- `cre-market.md` — CRE market findings
+- `ai-tech.md` — AI & fringe science findings
+- `finance-geo.md` — Finance & geopolitics findings
 - `deep-dives.md` — Deep dive archive
+- `physics.md`, `mathematics.md`, `biology.md`, `chemistry.md`, `earth-materials.md` — weekly science sections
 
 Each job reads its walnut before researching (context) and writes new findings after (memory). This makes each day's research smarter than yesterday's.
 
@@ -127,6 +128,6 @@ clippy-src/
   clippy.log        — Application log
   walnuts/
     ai-tech.md
-    cre-market.md
+    finance-geo.md
     deep-dives.md
 ```

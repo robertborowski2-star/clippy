@@ -30,9 +30,9 @@ def main():
     parser.add_argument("--no-bot", action="store_true", help="Run scheduler only, no Telegram bot")
     parser.add_argument(
         "--run",
-        choices=["ai", "finance", "cre", "deep", "science"],
+        choices=["ai", "finance", "deep", "science"],
         help="Run a single job once and exit (manual trigger). "
-             "Useful for testing email/Telegram delivery without waiting for cron.",
+             "Useful for testing Telegram delivery without waiting for cron.",
     )
     args = parser.parse_args()
 
@@ -45,7 +45,6 @@ def main():
         log.info(f"Running single job: {args.run}")
         job_map = {
             "ai": scheduler.run_ai_fringe,
-            "cre": scheduler.run_cre_weekly,
             "finance": scheduler.run_finance_geo,
             "deep": scheduler.run_deep_dive,
             "science": scheduler.run_science_roundup,

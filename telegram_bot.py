@@ -49,8 +49,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Commands:\n"
         "/ask <question> — Ask me anything\n"
         "/status — Show scheduled jobs\n"
-        "/run <job> — Manually trigger a job (ai, cre, deep, weekly)\n"
-        "/walnut <name> — Read a walnut file (ai-tech, cre-market, deep-dives)"
+        "/run <job> — Manually trigger a job (ai, finance, deep, science)\n"
+        "/walnut <name> — Read a walnut file (ai-tech, finance-geo, deep-dives)"
     )
 
 
@@ -72,7 +72,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Manually trigger a research job."""
     if not context.args:
-        await update.message.reply_text("Usage: /run <ai|cre|deep|weekly>")
+        await update.message.reply_text("Usage: /run <ai|finance|deep|science>")
         return
 
     job = context.args[0].lower()
@@ -80,23 +80,23 @@ async def cmd_run(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     import scheduler
     job_map = {
-        "ai": scheduler.run_ai_tech,
-        "cre": scheduler.run_cre_market,
+        "ai": scheduler.run_ai_fringe,
+        "finance": scheduler.run_finance_geo,
         "deep": scheduler.run_deep_dive,
-        "weekly": scheduler.run_weekly_summary,
+        "science": scheduler.run_science_roundup,
     }
 
     func = job_map.get(job)
     if func:
         func()
     else:
-        await update.message.reply_text(f"Unknown job: {job}. Use: ai, cre, deep, weekly")
+        await update.message.reply_text(f"Unknown job: {job}. Use: ai, finance, deep, science")
 
 
 async def cmd_walnut(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Read a walnut file."""
     if not context.args:
-        await update.message.reply_text("Usage: /walnut <ai-tech|cre-market|deep-dives>")
+        await update.message.reply_text("Usage: /walnut <ai-tech|finance-geo|deep-dives>")
         return
 
     name = context.args[0].lower()

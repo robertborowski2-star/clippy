@@ -5,7 +5,6 @@ import urllib.request
 import urllib.parse
 import json
 import os
-import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 import requests
@@ -206,185 +205,6 @@ def fetch_eartharxiv(max_results: int = 50) -> str:
     except Exception as e:
         return f"[EarthArxiv fetch failed: {e}]"
 
-
-# ── CRE source RSS fetchers ────────────────────────────────────────────────
-
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _fetch_rss(url: str, max_items: int = 15, keyword_filter: list = None,
-               over_fetch_factor: int = 4) -> list:
-    """Generic RSS 2.0 fetcher.
-
-    Returns a list of dicts: {title, link, description, categories}.
-    If keyword_filter is provided, items matching any keyword (in title,
-    description, or category) are kept; others dropped. We over-fetch to
-    compensate for filter rejections.
-    """
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Clippy-Research-Agent/1.0 (+https://github.com/robertborowski2-star/clippy)",
-        "Accept": "application/rss+xml, application/xml, text/xml, */*",
-    })
-    with urllib.request.urlopen(req, timeout=15) as r:
-        xml_data = r.read()
-
-    root = ET.fromstring(xml_data)
-    channel = root.find("channel")
-    if channel is None:
-        return []
-
-    raw_items = channel.findall("item")
-    fetch_cap = max_items * over_fetch_factor if keyword_filter else max_items
-
-    results = []
-    for item in raw_items[:fetch_cap]:
-        title_el = item.find("title")
-        link_el = item.find("link")
-        desc_el = item.find("description")
-        cats = [c.text for c in item.findall("category") if c.text]
-
-        title = (title_el.text or "").strip() if title_el is not None and title_el.text else ""
-        link = (link_el.text or "").strip() if link_el is not None and link_el.text else ""
-        desc_raw = (desc_el.text or "").strip() if desc_el is not None and desc_el.text else ""
-        desc = _HTML_TAG_RE.sub("", desc_raw).strip()[:300]
-
-        if keyword_filter:
-            haystack = (title + " " + desc + " " + " ".join(cats)).lower()
-            if not any(kw.lower() in haystack for kw in keyword_filter):
-                continue
-
-        results.append({
-            "title": title, "link": link, "description": desc, "categories": cats,
-        })
-        if len(results) >= max_items:
-            break
-
-    return results
-
-
-def _format_rss_section(heading: str, items: list) -> str:
-    """Render a list of RSS dicts as a markdown section."""
-    if not items:
-        return f"## {heading}\n_(no recent items)_"
-    lines = [f"## {heading}"]
-    for it in items:
-        line = f"- **{it['title']}** ({it['link']})"
-        if it["description"]:
-            line += f"\n  {it['description']}"
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def _slug_to_title(slug: str) -> str:
-    """Convert a URL slug like 'hudson-s-bay-ccaa-ruling' to 'Hudson S Bay Ccaa Ruling'."""
-    return " ".join(w.capitalize() for w in slug.replace("-", " ").split() if w)
-
-
-def _fetch_sitemap_recent(url: str, prefix: str = "", max_items: int = 15) -> list:
-    """Fetch a sitemap.xml, return the most recent entries by lastmod desc.
-
-    prefix: only include URLs starting with this string. Used to filter to
-    article paths (e.g., '/p/' on Insolvency Insider) and skip taxonomy
-    pages, author bios, and the homepage.
-
-    Returns list of dicts: {url, lastmod, slug, title}.
-    """
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Clippy-Research-Agent/1.0",
-        "Accept": "application/xml, text/xml, */*",
-    })
-    with urllib.request.urlopen(req, timeout=15) as r:
-        raw = r.read()
-
-    root = ET.fromstring(raw)
-    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-    url_elements = root.findall("sm:url", ns)
-
-    entries = []
-    for u in url_elements:
-        loc_el = u.find("sm:loc", ns)
-        mod_el = u.find("sm:lastmod", ns)
-        if loc_el is None or not loc_el.text:
-            continue
-        loc = loc_el.text.strip()
-        if prefix and not loc.startswith(prefix):
-            continue
-        if not prefix and loc.endswith("/"):
-            continue
-        mod = mod_el.text.strip() if mod_el is not None and mod_el.text else "1970-01-01"
-        slug = loc.rstrip("/").rsplit("/", 1)[-1]
-        entries.append({
-            "url": loc,
-            "lastmod": mod,
-            "slug": slug,
-            "title": _slug_to_title(slug),
-        })
-
-    # ISO-8601 timestamps sort lexically the same as chronologically.
-    entries.sort(key=lambda e: e["lastmod"], reverse=True)
-    return entries[:max_items]
-
-
-def _format_sitemap_section(heading: str, entries: list) -> str:
-    """Render a list of sitemap entry dicts as a markdown section."""
-    if not entries:
-        return f"## {heading}\n_(no recent items)_"
-    lines = [f"## {heading}"]
-    for e in entries:
-        lines.append(f"- **{e['title']}** ({e['url']}) — {e['lastmod'][:10]}")
-    return "\n".join(lines)
-
-
-def fetch_renx(max_items: int = 20) -> str:
-    """Fetch recent RENx.ca articles via their posts sitemap.
-
-    RENx doesn't expose an RSS feed, so we use their posts sitemap and derive
-    titles from URL slugs. Slug-derived titles are imperfect (e.g., 'Nyc'
-    instead of 'NYC') but readable enough for the LLM to identify interesting
-    stories. All RENx content is CRE-focused so no keyword filter needed.
-    """
-    try:
-        entries = _fetch_sitemap_recent(
-            "https://renx.ca/sitemaps/posts-1.xml",
-            prefix="https://renx.ca/",
-            max_items=max_items,
-        )
-        return _format_sitemap_section("RENx — Recent Articles (sitemap)", entries)
-    except Exception as e:
-        return f"[RENx fetch failed: {e}]"
-
-
-def fetch_storeys(max_items: int = 15) -> str:
-    """Fetch recent Storeys articles via RSS."""
-    try:
-        items = _fetch_rss("https://storeys.com/feed/", max_items=max_items)
-        return _format_rss_section("Storeys — Recent Articles", items)
-    except Exception as e:
-        return f"[Storeys fetch failed: {e}]"
-
-
-def fetch_insolvency_insider(max_items: int = 15) -> str:
-    """Fetch recent Insolvency Insider filings via their sitemap.
-
-    Insolvency Insider is a SPA with no RSS, so we use their sitemap. Filtered
-    to article paths (`/p/...`) only. Items are NOT keyword-filtered to real
-    estate at fetch time — slug-only matching would miss CRE-relevant entries
-    like 'Hudson's Bay CCAA' (no 'real estate' keyword in slug). The CRE prompt
-    instructs the LLM to do the relevance filtering instead, which works well
-    because slugs carry the company name and case type.
-    """
-    try:
-        entries = _fetch_sitemap_recent(
-            "https://insolvencyinsider.ca/sitemap.xml",
-            prefix="https://insolvencyinsider.ca/p/",
-            max_items=max_items,
-        )
-        return _format_sitemap_section(
-            "Insolvency Insider — Recent Canadian Filings (unfiltered; LLM curates to CRE)",
-            entries,
-        )
-    except Exception as e:
-        return f"[Insolvency Insider fetch failed: {e}]"
 
 def load_voice_corrections() -> str:
     """Load voice correction examples to guide Clippy's writing style."""
@@ -623,67 +443,119 @@ def research(job_name: str, prompt: str, walnut_context: str = "", project_conte
 # ── Research Jobs ──────────────────────────────────────────────────────────
 
 def ai_fringe_research(walnut_context: str = "", project_context: str = "") -> str:
-    """07:45 daily — AI & Fringe Science research with pre-fetched HN + arXiv + Brave data."""
+    """07:45 daily — AI & Fringe Science research with pre-fetched HN + arXiv + Brave data.
+
+    Rebuilt 2026-05-21 with the same grounding treatment finance-geo got on
+    2026-05-08. The prior version fetched 13 broad arXiv categories and 3
+    generic undated Brave queries ("AI breakthrough today", "robotics
+    research 2026", "quantum computing news"), then asked for 10-12 findings.
+    The volume swamped the LLM and the undated Brave snippets left it
+    pattern-matching from training data instead of grounding.
+
+    Now: 6 focused arXiv categories, ~8 date-anchored Brave queries with
+    `freshness="pw"` (weekly — AI moves slower than market data, daily
+    would starve the model), 6-8 findings, and STRICT GROUNDING RULES
+    matching finance-geo's. The per-finding analysis structure
+    (Assumption / Cross-domain signal / Open question) stays — that's
+    the synthesis layer Robert values; the fix is grounding the facts
+    underneath it.
+    """
+
+    today = datetime.now()
+    month_year = today.strftime("%B %Y")
 
     hn_data = fetch_hn_stories(n=15)
+
+    # 6 load-bearing arXiv categories. The earlier 13 included stats,
+    # quant-bio, quant-fin, econ, EE, systems, and generic CS — those rarely
+    # produced selected findings and their volume crowded out the strong
+    # categories. Kept: the 5 that consistently surfaced selectable papers
+    # plus a dedicated "computational discovery" slot for AI-driven science
+    # (protein folding, materials, drug discovery) that used to be folded
+    # into the physics query.
     arxiv_ai = fetch_arxiv_papers("AI agents LLM reasoning tool use", max_results=6)
-    arxiv_frontier = fetch_arxiv_papers("robotics embodied AI manipulation locomotion", max_results=4)
-    arxiv_quantum = fetch_arxiv_papers("quantum computing neuromorphic mathematics breakthrough formal proofs", max_results=4)
+    arxiv_robotics = fetch_arxiv_papers("robotics embodied AI manipulation locomotion", max_results=4)
     arxiv_neuro = fetch_arxiv_papers("neuroscience brain-computer interface neural coding AI", max_results=4)
-    arxiv_physics = fetch_arxiv_papers("physics AI implications protein folding computational discovery", max_results=4)
     arxiv_math = fetch_arxiv_papers("pure mathematics topology algebra number theory breakthrough", max_results=4)
-    arxiv_stats = fetch_arxiv_papers("statistics probability inference causal discovery", max_results=4)
-    arxiv_quantbio = fetch_arxiv_papers("quantitative biology systems biology computational genomics", max_results=4)
-    arxiv_quantfin = fetch_arxiv_papers("quantitative finance market microstructure algorithmic trading", max_results=4)
-    arxiv_econ = fetch_arxiv_papers("economics mechanism design game theory complexity", max_results=4)
-    arxiv_ee = fetch_arxiv_papers("electrical engineering signal processing neuromorphic hardware", max_results=4)
-    arxiv_systems = fetch_arxiv_papers("systems science complexity emergence self organization", max_results=4)
-    arxiv_cs = fetch_arxiv_papers("computer science complexity theory cryptography distributed systems", max_results=4)
-    brave_ai = fetch_brave_search("AI breakthrough today")
-    brave_robotics = fetch_brave_search("robotics research 2026")
-    brave_quantum = fetch_brave_search("quantum computing news")
+    arxiv_physics = fetch_arxiv_papers("physics theoretical condensed matter quantum field", max_results=4)
+    arxiv_compdisc = fetch_arxiv_papers("computational discovery protein folding materials drug discovery AI", max_results=4)
+
+    # Date-anchored Brave queries with freshness=pw (past week). AI/science
+    # news moves slower than markets, so weekly is the right window —
+    # `freshness="pd"` would return mostly empty for queries like
+    # "AI safety alignment research" on any given day. Month-anchoring
+    # forces the LLM to ground in current content rather than recall.
+    brave_queries = [
+        f"AI research breakthrough {month_year}",
+        f"large language model release {month_year}",
+        f"AI agent framework news {month_year}",
+        f"AI safety alignment research {month_year}",
+        f"robotics research news {month_year}",
+        f"quantum computing breakthrough {month_year}",
+        f"neuroscience research news {month_year}",
+        f"computational biology breakthrough {month_year}",
+    ]
+    brave_data = "\n\n".join(
+        fetch_brave_search(q, count=8, freshness="pw") for q in brave_queries
+    )
+
     github_data = fetch_github_releases()
 
     prompt = (
-        "Research the latest AI and fringe science news for today.\n\n"
-        "I've pre-fetched these data sources — use them as primary input:\n\n"
+        "Research the latest AI and fringe science news for this week.\n\n"
+        f"Today is {today.strftime('%A, %B %d, %Y')}.\n\n"
+        "I've pre-fetched these data sources (HN + arXiv + fresh Brave Search "
+        "results filtered to past week + recent GitHub releases). Use them as "
+        "your PRIMARY and ONLY source for specific figures, dated claims, and "
+        "named people/labs/papers:\n\n"
         f"{hn_data}\n\n"
         f"## arXiv: AI & LLMs\n{arxiv_ai}\n\n"
-        f"## arXiv: Robotics & Embodied AI\n{arxiv_frontier}\n\n"
-        f"## arXiv: Quantum, Neuromorphic & Math\n{arxiv_quantum}\n\n"
+        f"## arXiv: Robotics & Embodied AI\n{arxiv_robotics}\n\n"
         f"## arXiv: Neuroscience × AI\n{arxiv_neuro}\n\n"
-        f"## arXiv: Physics & Computational Discovery\n{arxiv_physics}\n\n"
         f"## arXiv: Pure Mathematics\n{arxiv_math}\n\n"
-        f"## arXiv: Statistics & Probability\n{arxiv_stats}\n\n"
-        f"## arXiv: Quantitative Biology\n{arxiv_quantbio}\n\n"
-        f"## arXiv: Quantitative Finance\n{arxiv_quantfin}\n\n"
-        f"## arXiv: Economics\n{arxiv_econ}\n\n"
-        f"## arXiv: Electrical Engineering\n{arxiv_ee}\n\n"
-        f"## arXiv: Systems Science\n{arxiv_systems}\n\n"
-        f"## arXiv: Computer Science\n{arxiv_cs}\n\n"
-        f"{brave_ai}\n\n"
-        f"{brave_robotics}\n\n"
-        f"{brave_quantum}\n\n"
+        f"## arXiv: Physics\n{arxiv_physics}\n\n"
+        f"## arXiv: Computational Discovery\n{arxiv_compdisc}\n\n"
+        f"{brave_data}\n\n"
         f"{github_data}\n\n"
-        f"Today is {datetime.now().strftime('%B %d, %Y')}. "
-        "Use ONLY the pre-fetched data above for all specific prices, figures, and market levels — "
-        "do NOT use your training data for any market figures as it is outdated. "
-        "The data above is live and current.\n\n"
-        "Based on the above:\n"
-        "1. Pick the most relevant HN stories (AI, LLMs, coding tools, agent frameworks, science)\n"
-        "2. Pick the most interesting arXiv papers across ALL categories — AI, robotics, "
-        "quantum, neuro, physics, math, statistics, biology, economics, electrical "
-        "engineering, systems science, computer science, quantitative finance. "
-        "Cast wide. The most interesting finding might come from any domain.\n"
-        "3. Use web_search for any breaking news NOT covered above\n\n"
-        "Summarize top 10-12 findings total. For each finding:\n"
-        "- Title + 80 word summary of what it is\n"
-        "- One line: 'Assumption it challenges:' — what accepted belief does this push back on?\n"
-        "- One line: 'Cross-domain signal:' — what other field does this remind you of or connect to?\n"
-        "- One line: 'Open question:' — what would you need to know to evaluate if this is real?\n\n"
+        "STRICT GROUNDING RULES — these are not suggestions:\n"
+        "1. Every specific figure (benchmark scores, parameter counts, "
+        "training compute, funding amounts, dates) MUST appear verbatim or "
+        "near-verbatim in the data above. If you cannot find a figure in the "
+        "data, OMIT it. Do NOT fill in plausible-sounding numbers from "
+        "training memory.\n"
+        "2. Every dated event (paper release, model launch, lab "
+        "announcement, conference result) MUST be findable in the data and "
+        "dated within the last 30 days. If you cannot find a recent date, "
+        "do NOT mention the event.\n"
+        "3. Every named person, lab, or company MUST appear in the data. "
+        "Do NOT name researchers, founders, or executives from memory — "
+        "people change roles and your training data is stale.\n"
+        "4. Every cited source URL must come from the data above. One URL "
+        "per finding minimum. If you cannot cite, you do not have grounding "
+        "for that finding — drop it.\n"
+        "5. Do NOT use template phrases that you would write regardless of "
+        "this week's actual news. Forbidden examples: 'rapid progress "
+        "continues', 'the field is moving fast', 'scaling laws hold', "
+        "'capabilities are accelerating'. These are tells of training-data "
+        "padding, not current reporting.\n"
+        "6. If the data is thin on a topic, write fewer findings or drop "
+        "the topic. A 4-finding brief grounded in real data beats an "
+        "8-finding brief padded with fabrications.\n\n"
+        "Based on the data above, summarize 6-8 findings. Cast wide — the "
+        "most interesting finding might come from any category, not just "
+        "AI/LLM. For each finding:\n"
+        "- Title + 80 word summary built from the data\n"
+        "- At least one source URL in parentheses\n"
+        "- One line: 'Assumption it challenges:' — what accepted belief does "
+        "this push back on?\n"
+        "- One line: 'Cross-domain signal:' — what other field does this "
+        "remind you of or connect to?\n"
+        "- One line: 'Open question:' — what would you need to know to "
+        "evaluate if this is real?\n\n"
         "Do NOT flag for specific projects. Stay curious and broad.\n"
-        "End with: '→ Darwin seed:' — one sentence on the most interesting unresolved "
-        "question across ALL findings today. Something nobody has answered yet."
+        "End with: '→ Darwin seed:' — one sentence on the most interesting "
+        "unresolved question across ALL findings today. Something nobody "
+        "has answered yet."
     )
     return research("AI & Fringe Science", prompt, walnut_context, project_context)
 
@@ -771,153 +643,7 @@ def finance_geo_research(walnut_context: str = "") -> str:
     return research("Finance & Geopolitics", prompt, walnut_context)
 
 
-def cre_market_research(walnut_context: str = "", project_context: str = "") -> str:
-    """Monday 10:00 — CRE Weekly research.
-
-    Output is structured for both walnut accumulation AND email delivery to
-    a colleague distribution list. Slightly more polished than other jobs:
-    executive summary intro, named themes as `## ` level-2 headings, and
-    sourced findings under each theme. The `## ` headings remain intact so
-    Darwin's chunker still works.
-
-    Note: project_context is accepted by the signature for compatibility with
-    the scheduler's existing call shape, but is intentionally NOT forwarded
-    to research(). The CRE brief goes to colleagues — Robert's personal
-    project context (Klaus, CRE-LLM) must NOT leak into it.
-    """
-
-    # Direct trade-press feeds. Storeys = real RSS; RENx and Insolvency
-    # Insider = sitemap-derived (no RSS available). Sitemap entries carry
-    # only URL + lastmod; titles are slug-derived (imperfect capitalization
-    # but readable). Insolvency Insider is unfiltered — the LLM filters
-    # to CRE-relevance below.
-    rss_renx = fetch_renx(max_items=20)
-    rss_storeys = fetch_storeys(max_items=15)
-    rss_insolvency = fetch_insolvency_insider(max_items=15)
-
-    # Brave Search — broader market context the trade press may not catch.
-    # Date-anchored queries with freshness=past week so the LLM grounds in
-    # real current data rather than padding from training. CRE freshness is
-    # 'pw' (not 'pd' like finance-geo) because CRE news moves slower —
-    # weekly cadence is the right window for cap rate moves, transactions,
-    # and policy signals.
-    today = datetime.now()
-    month_year = today.strftime("%B %Y")
-    brave_queries = [
-        f"Canadian commercial real estate news {month_year}",
-        f"Toronto office market {month_year}",
-        f"Vancouver industrial real estate {month_year}",
-        f"Canadian REIT news {month_year}",
-        f"CMHC housing report {month_year}",
-        "Canadian retail real estate distress this week",
-        "Canadian multi-family REIT this week",
-        f"Canadian industrial cap rate {month_year}",
-        "Canadian commercial mortgage rates this week",
-        "CCAA Canada real estate filings this week",
-        f"Canadian construction starts {month_year}",
-        f"Canadian CRE transactions {month_year}",
-    ]
-    brave_data = "\n\n".join(
-        fetch_brave_search(q, count=8, freshness="pw") for q in brave_queries
-    )
-
-    prompt = (
-        "Research Canadian commercial real estate (CRE) news for this week. "
-        "This brief is sent by email to senior CRE executives, so format and "
-        "tone should be polished and professional — but still tight, no fluff. "
-        "It is a market news brief only. Do NOT mention any internal projects, "
-        "products, or personal context in the output.\n\n"
-        f"Today is {today.strftime('%A, %B %d, %Y')}.\n\n"
-        "I've pre-fetched these data sources (trade-press RSS + sitemaps + "
-        "fresh Brave Search results filtered to past week) — use them as "
-        "your PRIMARY and ONLY source for figures and named transactions:\n\n"
-        f"{rss_renx}\n\n"
-        f"{rss_storeys}\n\n"
-        f"{rss_insolvency}\n\n"
-        f"{brave_data}\n\n"
-        "STRICT GROUNDING RULES — these are not suggestions:\n"
-        "1. Every cap rate, $/sqft, transaction size, named buyer/seller/"
-        "broker, and named property MUST appear in the pre-fetched data "
-        "above. If a specific is not in the data, OMIT it. Do NOT fill in "
-        "plausible-sounding figures from training data.\n"
-        "2. Every dated event (closings, filings, policy announcements) "
-        "MUST be findable in the data and dated within the last 30 days.\n"
-        "3. Every cited source URL must come from the data above.\n"
-        "4. Do NOT use template phrases that you'd write regardless of the "
-        "week's actual news. Forbidden examples: 'cap rates remain "
-        "compressed', 'capital remains on the sidelines', 'investor "
-        "sentiment is cautiously optimistic'. These are filler.\n"
-        "5. If the data is thin on a theme, write fewer findings or drop "
-        "the theme. A 3-theme brief grounded in real data is better than a "
-        "5-theme brief padded with fabrications.\n\n"
-        "OUTPUT STRUCTURE — STRICT (downstream tooling depends on it):\n\n"
-        "Start the output with a 2-3 sentence executive summary in plain prose. "
-        "Do NOT prepend any 'Clippy' header, agent name, or date line — the email "
-        "subject already carries that. The first words of the brief are the "
-        "executive summary. (Read like a Bloomberg Daybook lede — no bullets here.)\n\n"
-        "Then 3-5 named themes, each as a `## ICON N. Theme Name` level-2 "
-        "heading. Theme names must be specific to Canadian commercial real "
-        "estate. Examples (NOT a required list — pick what actually fits "
-        "this week's content): 'Cap Rate Compression in Industrial', "
-        "'Distress / Receiverships', 'Office-to-Resi Conversions', "
-        "'Major Transactions', 'Policy & Regulation', 'Retail Sector "
-        "Trends', 'Multi-Family', 'Hospitality'. Use the headings to "
-        "group findings, not to label individual articles. Do NOT "
-        "shoehorn an industrial transaction into a 'Multi-Family' theme "
-        "or vice versa — if you have cross-asset deal flow this week, "
-        "use a generic 'Major Transactions' theme rather than forcing "
-        "an asset-specific theme name.\n\n"
-        "Under each theme:\n"
-        "- 2-4 findings as bullet points\n"
-        "- Each finding: bolded headline + 50-80 word summary + source link "
-        "in parentheses\n"
-        "- Where relevant, include cap rates, $/sqft, transaction sizes, "
-        "and named parties (buyer/seller/broker)\n\n"
-        "STRICT CURATION RULES for the Distress / Receiverships theme:\n"
-        "Insolvency Insider's feed above is UNFILTERED Canadian filings. "
-        "INCLUDE an item ONLY if the filing entity directly owns, operates, "
-        "or has primary business activity in: real estate, REITs, retail "
-        "with physical store footprint, hospitality (hotels, restaurants "
-        "with physical locations), construction, developers, landlords, "
-        "homebuilders, or property management. SKIP: tech / AI / SaaS / "
-        "fintech firms, agriculture or farming (unless they're a publicly-"
-        "traded agricultural REIT or have substantial commercial real "
-        "estate land holdings), pure financial-services firms, individual "
-        "personal bankruptcies, professional-services firms (law, "
-        "accounting). When unsure whether a filing has real-estate exposure, "
-        "leave it out.\n\n"
-        "DO NOT mention items you are excluding. Just leave them out "
-        "silently. NEVER write things like 'Sequent AI placed in "
-        "receivership; tech firms excluded per curation rules' — that "
-        "defeats the purpose of curation and surfaces noise to the "
-        "reader. The reader should see ONLY items that passed your "
-        "filter, with no acknowledgment that you considered and rejected "
-        "others.\n\n"
-        "Empty-section fallback rule: ONLY use the line "
-        "'_No notable real-estate-related filings this week._' if you "
-        "have ZERO qualifying items in the Distress section. If you have "
-        "even one qualifying item (e.g., Hudson's Bay CCAA), do NOT "
-        "append the fallback line — it contradicts the items you just "
-        "listed. The fallback line and real items are mutually exclusive.\n\n"
-        "Do NOT pad the Distress section with unrelated filings to fill "
-        "space. A short or empty Distress section is correct when the "
-        "week's filings are not real-estate-related.\n\n"
-        "Note on titles in RENx and Insolvency Insider sources: those are "
-        "derived from URL slugs (e.g., 'Hudson S Bay Ccaa Proceedings' "
-        "really means 'Hudson's Bay CCAA Proceedings'). Render them with "
-        "proper capitalization and apostrophes when you include them in "
-        "the brief. Use web_search to verify details if a slug-titled item "
-        "looks important.\n\n"
-        "End with two lines:\n"
-        "  '→ Watch this week:' one specific thing to monitor\n"
-        "  '→ Action:' one specific thing readers should consider doing\n\n"
-        "Reminder: this brief is for external readers. Do NOT reference any "
-        "internal projects, codenames, or backlog items. Markets news only."
-    )
-    return research("CRE Weekly", prompt, walnut_context)
-
-
-def deep_dive(ai_context: str = "", finance_context: str = "", cre_context: str = "", project_contexts: dict = None) -> str:
+def deep_dive(ai_context: str = "", finance_context: str = "", project_contexts: dict = None) -> str:
     """21:00 daily — Deep dive on the most impactful finding across all topics."""
     project_contexts = project_contexts or {}
     project_block = "".join(
@@ -945,7 +671,6 @@ def deep_dive(ai_context: str = "", finance_context: str = "", cre_context: str 
         "End with one '→ Open question:' that Darwin should sit with.\n\n"
         f"Today's AI & Fringe Science findings:\n{ai_context[:8000]}\n\n"
         f"Today's Finance & Geopolitics findings:\n{finance_context[:5000]}\n\n"
-        f"Today's most recent CRE findings (may be from earlier this week):\n{cre_context[:5000]}\n\n"
     )
     return research("Deep Dive", prompt)
 
